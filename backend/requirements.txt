@@ -1,0 +1,36 @@
+# SheetFlow AI - Backend Dependencies
+
+# FastAPI & Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+alembic==1.13.1
+
+# Pydantic & Settings
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Security & Auth
+python-jose[cryptography]==3.3.0
+cryptography==41.0.7
+httpx==0.26.0
+
+# Data Processing
+pandas==2.1.4
+openpyxl==3.1.2
+numpy==1.26.3
+
+# AI & LangGraph
+langchain==0.1.0
+langchain-google-genai==0.0.6
+langgraph==0.0.20
+google-generativeai==0.3.2
+
+# Utils
+python-dotenv==1.0.0
+
+email-validator>=2.0.0
