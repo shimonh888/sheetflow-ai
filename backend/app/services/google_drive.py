@@ -50,32 +50,54 @@ class GoogleDriveService:
         """Get authorization headers."""
         return {"Authorization": f"Bearer {self.access_token}"}
     
-    async def list_excel_files(
+    async def list_folder_contents(
         self, 
+        folder_id: Optional[str] = None,
+        search_query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 50
     ) -> Dict[str, Any]:
         """
-        List Excel files from user's Google Drive.
+        List folders and Excel files from user's Google Drive.
         
         Args:
+            folder_id: Parent folder ID (None = root/all accessible files)
+            search_query: Optional search filter for file names
             page_token: Token for pagination
             page_size: Number of files per page
             
         Returns:
-            Dict with files list and next_page_token
+            Dict with files list (including folders) and next_page_token
         """
-        # Query for Excel files
-        query = (
+        # Build query for Excel files AND folders
+        mime_conditions = (
             "mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
-            "or mimeType='application/vnd.ms-excel'"
+            "or mimeType='application/vnd.ms-excel' "
+            "or mimeType='application/vnd.google-apps.folder'"
         )
+        
+        query_parts = [f"({mime_conditions})"]
+        
+        # Add folder filter if specified
+        if folder_id:
+            query_parts.append(f"'{folder_id}' in parents")
+        
+        # Add search filter if specified
+        if search_query:
+            # Escape single quotes in search query
+            safe_query = search_query.replace("'", "\\'")
+            query_parts.append(f"name contains '{safe_query}'")
+        
+        # Exclude trashed files
+        query_parts.append("trashed = false")
+        
+        query = " and ".join(query_parts)
         
         params = {
             "q": query,
-            "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,size)",
+            "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,size,parents)",
             "pageSize": page_size,
-            "orderBy": "modifiedTime desc",
+            "orderBy": "folder,name",  # Folders first, then alphabetically
         }
         if page_token:
             params["pageToken"] = page_token
@@ -96,10 +118,46 @@ class GoogleDriveService:
             response.raise_for_status()
             data = response.json()
         
+        # Add is_folder flag to each file
+        files = []
+        for f in data.get("files", []):
+            files.append({
+                **f,
+                "is_folder": f.get("mimeType") == "application/vnd.google-apps.folder"
+            })
+        
         return {
-            "files": data.get("files", []),
-            "next_page_token": data.get("nextPageToken")
+            "files": files,
+            "next_page_token": data.get("nextPageToken"),
+            "current_folder_id": folder_id
         }
+    
+    async def list_excel_files(
+        self, 
+        page_token: Optional[str] = None,
+        page_size: int = 50
+    ) -> Dict[str, Any]:
+        """
+        List Excel files from user's Google Drive (legacy method for backwards compatibility).
+        
+        Args:
+            page_token: Token for pagination
+            page_size: Number of files per page
+            
+        Returns:
+            Dict with files list and next_page_token
+        """
+        # Use list_folder_contents but filter out folders
+        result = await self.list_folder_contents(
+            folder_id=None,
+            search_query=None,
+            page_token=page_token,
+            page_size=page_size
+        )
+        
+        # Filter out folders for backwards compatibility
+        result["files"] = [f for f in result["files"] if not f.get("is_folder")]
+        return result
     
     async def get_file_metadata(self, file_id: str) -> Dict[str, Any]:
         """

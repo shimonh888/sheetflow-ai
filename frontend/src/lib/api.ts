@@ -155,13 +155,32 @@ export interface DriveFile {
     mime_type: string
     modified_time: string | null
     size: number | null
+    is_folder: boolean
 }
 
-export async function listDriveFiles(pageToken?: string): Promise<{
+export interface DriveFilesResponse {
     files: DriveFile[]
     next_page_token: string | null
-}> {
+    current_folder_id: string | null
+}
+
+export async function listDriveFiles(options?: {
+    pageToken?: string
+    folderId?: string
+    search?: string
+}): Promise<DriveFilesResponse> {
     const params: Record<string, string> = {}
-    if (pageToken) params.page_token = pageToken
-    return fetchWithAuth(`/api/dashboards/drive-files`)
+    if (options?.pageToken) params.page_token = options.pageToken
+    if (options?.folderId) params.folder_id = options.folderId
+    if (options?.search) params.search = options.search
+
+    const queryString = Object.entries(params)
+        .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+        .join('&')
+
+    const path = queryString
+        ? `/api/dashboards/drive-files?${queryString}`
+        : `/api/dashboards/drive-files`
+
+    return fetchWithAuth(path)
 }

@@ -146,12 +146,14 @@ class DriveFile(BaseModel):
     mime_type: str
     modified_time: Optional[datetime] = None
     size: Optional[int] = None
+    is_folder: bool = False
 
 
 class DriveFilesResponse(BaseModel):
     """List of Drive files."""
     files: List[DriveFile]
     next_page_token: Optional[str] = None
+    current_folder_id: Optional[str] = None
 
 
 # ============================================================================

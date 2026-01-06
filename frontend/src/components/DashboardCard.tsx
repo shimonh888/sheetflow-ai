@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { FileSpreadsheet, Clock, BarChart2 } from 'lucide-react'
+import { FileSpreadsheet, Clock, BarChart2, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Dashboard {
@@ -15,9 +15,10 @@ interface Dashboard {
 
 interface DashboardCardProps {
     dashboard: Dashboard
+    onDelete?: (id: string, title: string) => void
 }
 
-export default function DashboardCard({ dashboard }: DashboardCardProps) {
+export default function DashboardCard({ dashboard, onDelete }: DashboardCardProps) {
     const formatDate = (date: string | undefined) => {
         if (!date) return 'Never'
         return new Date(date).toLocaleDateString('en-US', {
@@ -34,9 +35,28 @@ export default function DashboardCard({ dashboard }: DashboardCardProps) {
         schema_drift: 'text-yellow-400',
     }
 
+    const handleDelete = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (onDelete) {
+            onDelete(dashboard.id, dashboard.title || dashboard.file_name)
+        }
+    }
+
     return (
         <Link href={`/dashboard/${dashboard.id}`}>
-            <div className="glass-card p-6 group cursor-pointer hover:border-primary-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary-500/10">
+            <div className="glass-card p-6 group cursor-pointer hover:border-primary-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary-500/10 relative">
+                {/* Delete button */}
+                {onDelete && (
+                    <button
+                        onClick={handleDelete}
+                        className="absolute top-4 right-4 p-2 rounded-lg bg-red-500/10 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all duration-200 z-10"
+                        title="Delete dashboard"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                )}
+
                 <div className="flex items-start justify-between mb-4">
                     <div className="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center group-hover:bg-primary-500/20 transition-colors">
                         <FileSpreadsheet className="w-6 h-6 text-primary-400" />

@@ -36,15 +36,22 @@ settings = get_settings()
 @router.get("/drive-files", response_model=DriveFilesResponse)
 async def list_drive_files(
     page_token: Optional[str] = None,
+    folder_id: Optional[str] = Query(None, description="Folder ID to list contents of"),
+    search: Optional[str] = Query(None, description="Search query for file names"),
     current_user: User = Depends(get_current_user),
 ):
     """
-    List Excel files from user's Google Drive.
+    List Excel files and folders from user's Google Drive.
     
     Used for the file picker when creating a new dashboard.
+    Supports folder navigation and search.
     """
     drive_service = GoogleDriveService(current_user)
-    result = await drive_service.list_excel_files(page_token=page_token)
+    result = await drive_service.list_folder_contents(
+        folder_id=folder_id,
+        search_query=search,
+        page_token=page_token
+    )
     
     files = [
         DriveFile(
@@ -52,14 +59,16 @@ async def list_drive_files(
             name=f["name"],
             mime_type=f["mimeType"],
             modified_time=f.get("modifiedTime"),
-            size=int(f["size"]) if f.get("size") else None
+            size=int(f["size"]) if f.get("size") else None,
+            is_folder=f.get("is_folder", False)
         )
         for f in result["files"]
     ]
     
     return DriveFilesResponse(
         files=files,
-        next_page_token=result.get("next_page_token")
+        next_page_token=result.get("next_page_token"),
+        current_folder_id=result.get("current_folder_id")
     )
 
 
