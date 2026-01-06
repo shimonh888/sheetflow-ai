@@ -23,6 +23,11 @@ from app.schemas import (
     RefreshResponse,
     DriveFilesResponse,
     DriveFile,
+    ChartProposal,
+    PreviewRequest,
+    PreviewResponse,
+    DataSummary,
+    DashboardCreateWithCharts,
 )
 from app.routers.auth import get_current_user
 from app.services.google_drive import GoogleDriveService
@@ -70,6 +75,90 @@ async def list_drive_files(
         next_page_token=result.get("next_page_token"),
         current_folder_id=result.get("current_folder_id")
     )
+
+
+@router.post("/preview", response_model=PreviewResponse)
+async def preview_dashboard(
+    data: PreviewRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Analyze file and return chart proposals for user review.
+    
+    Does NOT create a dashboard - just returns AI suggestions
+    that the user can edit before finalizing.
+    """
+    # 1. Download file from Drive
+    drive_service = GoogleDriveService(current_user)
+    
+    try:
+        file_bytes = await drive_service.download_file(data.file_id)
+    except Exception as e:
+        logger.error(f"Failed to download file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to download file: {str(e)}"
+        )
+    
+    # 2. Run AI agent to get chart proposals
+    try:
+        agent = DataProcessingAgent(gemini_api_key=settings.GEMINI_API_KEY)
+        result = await agent.process_excel(file_bytes=file_bytes)
+        
+        # 3. Convert suggestions to ChartProposal format
+        proposals = []
+        for chart in result.suggested_charts:
+            proposals.append(ChartProposal(
+                id=chart.get("id", f"chart_{len(proposals)}"),
+                type=chart.get("type", "bar"),
+                title=chart.get("title", "Chart"),
+                x_axis=chart.get("x_axis"),
+                y_axis=chart.get("y_axis"),
+                data_key=chart.get("data_key"),
+                color=chart.get("color", "#14FF6E"),
+                reasoning=chart.get("reasoning", "AI-suggested visualization for your data.")
+            ))
+        
+        # 4. Build data summary for frontend editing
+        data_summary = DataSummary(
+            columns=[],
+            numeric_cols=[],
+            categorical_cols=[],
+            date_cols=[],
+            row_count=0
+        )
+        
+        # Extract summary from chart_data if available
+        if result.chart_data and "raw_data" in result.chart_data:
+            raw_data = result.chart_data["raw_data"]
+            if raw_data:
+                import pandas as pd
+                df = pd.DataFrame(raw_data)
+                data_summary = DataSummary(
+                    columns=list(df.columns),
+                    numeric_cols=[col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])],
+                    categorical_cols=[col for col in df.columns if df[col].dtype == 'object'],
+                    date_cols=[col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])],
+                    row_count=len(df)
+                )
+        
+        logger.info(f"Generated {len(proposals)} chart proposals for file {data.file_id}")
+        
+        return PreviewResponse(
+            file_id=data.file_id,
+            file_name=data.file_name,
+            sheet_names=result.sheet_names,
+            proposals=proposals,
+            data_summary=data_summary,
+            preview_data=result.chart_data or {}
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to process file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to analyze file: {str(e)}"
+        )
 
 
 @router.get("", response_model=DashboardListResponse)

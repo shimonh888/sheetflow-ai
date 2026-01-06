@@ -256,7 +256,7 @@ Categorical columns: {summary.get('categorical_cols', [])}
 Sample:
 {summary.get('sample', [])}
 
-Return a JSON array of chart configurations:
+Return a JSON array of chart configurations. For each chart, explain WHY you chose it:
 [
     {{
         "id": "chart_1",
@@ -265,11 +265,12 @@ Return a JSON array of chart configurations:
         "x_axis": "column_name or null",
         "y_axis": "column_name",
         "data_key": "column for values",
-        "color": "#hex_color"
+        "color": "#14FF6E",
+        "reasoning": "Brief explanation why this chart type is ideal for this data"
     }}
 ]
 
-Focus on meaningful business insights. JSON response only:"""
+Focus on meaningful business insights. Be specific in your reasoning. JSON response only:"""
 
             response = await self.model.generate_content_async(prompt)
             result_text = response.text.strip()
@@ -332,7 +333,8 @@ Focus on meaningful business insights. JSON response only:"""
                 "title": f"{numeric_cols[0]} by {categorical_cols[0]}",
                 "x_axis": categorical_cols[0],
                 "y_axis": numeric_cols[0],
-                "color": "#8884d8"
+                "color": "#14FF6E",
+                "reasoning": f"Bar chart effectively compares {numeric_cols[0]} values across different {categorical_cols[0]} categories."
             })
         
         # Line chart if there are multiple numeric columns
@@ -342,7 +344,8 @@ Focus on meaningful business insights. JSON response only:"""
                 "type": "line",
                 "title": f"{numeric_cols[0]} Trend",
                 "data_key": numeric_cols[0],
-                "color": "#82ca9d"
+                "color": "#14FF6E",
+                "reasoning": f"Line chart shows trends and patterns in {numeric_cols[0]} over the data series."
             })
         
         # Pie chart for first categorical column
@@ -352,7 +355,8 @@ Focus on meaningful business insights. JSON response only:"""
                 "type": "pie",
                 "title": f"{categorical_cols[0]} Distribution",
                 "data_key": categorical_cols[0],
-                "color": "#ffc658"
+                "color": "#14FF6E",
+                "reasoning": f"Pie chart visualizes the proportional distribution of {categorical_cols[0]} categories."
             })
         
         return charts

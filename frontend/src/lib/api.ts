@@ -107,6 +107,7 @@ export async function createDashboard(data: {
     file_id: string
     file_name: string
     title?: string
+    charts?: ChartProposal[]  // User-edited chart configs
 }): Promise<Dashboard> {
     return fetchWithAuth('/api/dashboards', {
         method: 'POST',
@@ -116,6 +117,48 @@ export async function createDashboard(data: {
 
 export async function deleteDashboard(id: string): Promise<void> {
     await fetchWithAuth(`/api/dashboards/${id}`, { method: 'DELETE' })
+}
+
+// Chart Preview
+export interface ChartProposal {
+    id: string
+    type: 'bar' | 'line' | 'pie' | 'area' | 'scatter'
+    title: string
+    x_axis: string | null
+    y_axis: string | null
+    data_key: string | null
+    color: string
+    reasoning: string
+}
+
+export interface DataSummary {
+    columns: string[]
+    numeric_cols: string[]
+    categorical_cols: string[]
+    date_cols: string[]
+    row_count: number
+}
+
+export interface PreviewResponse {
+    file_id: string
+    file_name: string
+    sheet_names: string[]
+    proposals: ChartProposal[]
+    data_summary: DataSummary
+    preview_data: any
+}
+
+export async function previewDashboard(
+    fileId: string,
+    fileName: string
+): Promise<PreviewResponse> {
+    return fetchWithAuth('/api/dashboards/preview', {
+        method: 'POST',
+        body: JSON.stringify({
+            file_id: fileId,
+            file_name: fileName
+        }),
+    })
 }
 
 export interface RefreshResponse {

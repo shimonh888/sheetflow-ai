@@ -106,6 +106,55 @@ class DashboardListResponse(BaseModel):
 
 
 # ============================================================================
+# Chart Preview Schemas
+# ============================================================================
+
+class ChartProposal(BaseModel):
+    """AI-generated chart proposal with reasoning."""
+    id: str
+    type: str = Field(..., description="bar, line, pie, area, scatter")
+    title: str
+    x_axis: Optional[str] = None
+    y_axis: Optional[str] = None
+    data_key: Optional[str] = None
+    color: str = "#14FF6E"  # Primary theme color (neon green)
+    reasoning: str = Field(..., description="AI's explanation for this chart choice")
+
+
+class PreviewRequest(BaseModel):
+    """Request to preview charts for a file."""
+    file_id: str = Field(..., description="Google Drive file ID")
+    file_name: str = Field(..., description="Original file name")
+
+
+class DataSummary(BaseModel):
+    """Summary of data structure for editing."""
+    columns: List[str] = []
+    numeric_cols: List[str] = []
+    categorical_cols: List[str] = []
+    date_cols: List[str] = []
+    row_count: int = 0
+
+
+class PreviewResponse(BaseModel):
+    """Response with chart proposals for user review."""
+    file_id: str
+    file_name: str
+    sheet_names: List[str] = []
+    proposals: List[ChartProposal]
+    data_summary: DataSummary
+    preview_data: Dict[str, Any] = {}  # Sample data for preview rendering
+
+
+class DashboardCreateWithCharts(BaseModel):
+    """Create dashboard with user-approved charts."""
+    file_id: str = Field(..., description="Google Drive file ID")
+    file_name: str = Field(..., description="Original file name")
+    title: Optional[str] = Field(None, description="Dashboard title")
+    charts: List[ChartProposal] = Field(default=[], description="User-edited chart configs")
+
+
+# ============================================================================
 # Refresh Schemas
 # ============================================================================
 

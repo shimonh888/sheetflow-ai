@@ -177,18 +177,9 @@ export default function DashboardsPage() {
             return
         }
 
-        setIsCreating(true)
-        try {
-            const dashboard = await createDashboard({
-                file_id: file.id,
-                file_name: file.name,
-            })
-            closeFilePicker()
-            router.push(`/dashboard/${dashboard.id}`)
-        } catch (error) {
-            console.error('Failed to create dashboard:', error)
-            setIsCreating(false)
-        }
+        // Navigate to preview page instead of creating immediately
+        closeFilePicker()
+        router.push(`/dashboard/preview/${file.id}?name=${encodeURIComponent(file.name)}`)
     }
 
     // Delete handlers
@@ -363,8 +354,8 @@ export default function DashboardsPage() {
                                         <button
                                             onClick={() => navigateToBreadcrumb(index)}
                                             className={`hover:text-primary-400 transition-colors ${index === folderStack.length - 1
-                                                    ? 'text-white font-medium'
-                                                    : 'text-dark-400'
+                                                ? 'text-white font-medium'
+                                                : 'text-dark-400'
                                                 }`}
                                         >
                                             {folder.name}
