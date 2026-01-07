@@ -41,20 +41,43 @@ class UserWithToken(UserResponse):
 
 
 # ============================================================================
+# FileSource Schemas
+# ============================================================================
+
+class FileSourceCreate(BaseModel):
+    """Single file with optional context for dashboard creation."""
+    file_id: str = Field(..., description="Google Drive file ID")
+    file_name: str = Field(..., description="Original file name")
+    file_context: Optional[str] = Field(None, description="User notes about this file for AI context")
+
+
+class FileSourceResponse(BaseModel):
+    """FileSource in API responses."""
+    id: UUID
+    file_id: str
+    file_name: str
+    file_context: Optional[str]
+    sheet_names: List[str] = []
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
 # Dashboard Schemas
 # ============================================================================
 
 class DashboardCreate(BaseModel):
-    """Properties for creating a dashboard."""
-    file_id: str = Field(..., description="Google Drive file ID")
-    file_name: str = Field(..., description="Original file name")
+    """Properties for creating a dashboard with multiple files."""
+    files: List[FileSourceCreate] = Field(..., description="List of files with optional context")
     title: Optional[str] = Field(None, description="Dashboard title")
+    global_description: Optional[str] = Field(None, description="Overall context for the AI")
 
 
 class DashboardUpdate(BaseModel):
     """Properties for updating a dashboard."""
     title: Optional[str] = None
     description: Optional[str] = None
+    global_description: Optional[str] = None
     dashboard_config: Optional[Dict[str, Any]] = None
     is_public: Optional[bool] = None
 
@@ -85,6 +108,7 @@ class DashboardResponse(BaseModel):
     file_name: str
     title: Optional[str]
     description: Optional[str]
+    global_description: Optional[str] = None
     sheet_names: List[str] = []
     dashboard_config: Optional[Dict[str, Any]]
     last_synced: Optional[datetime]
@@ -93,6 +117,7 @@ class DashboardResponse(BaseModel):
     is_public: bool
     created_at: datetime
     updated_at: datetime
+    file_sources: List[FileSourceResponse] = []
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -117,14 +142,14 @@ class ChartProposal(BaseModel):
     x_axis: Optional[str] = None
     y_axis: Optional[str] = None
     data_key: Optional[str] = None
-    color: str = "#14FF6E"  # Primary theme color (neon green)
+    color: Optional[str] = Field(default="#14FF6E", description="Primary theme color")
     reasoning: str = Field(..., description="AI's explanation for this chart choice")
 
 
 class PreviewRequest(BaseModel):
-    """Request to preview charts for a file."""
-    file_id: str = Field(..., description="Google Drive file ID")
-    file_name: str = Field(..., description="Original file name")
+    """Request to preview charts for multiple files."""
+    files: List[FileSourceCreate] = Field(..., description="Files to preview with optional context")
+    global_description: Optional[str] = Field(None, description="Overall context for the AI")
 
 
 class DataSummary(BaseModel):

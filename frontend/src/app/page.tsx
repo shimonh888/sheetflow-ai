@@ -8,7 +8,8 @@ import {
     Shield,
     Zap,
     ArrowRight,
-    Sparkles
+    Sparkles,
+    Files
 } from 'lucide-react'
 
 export default function Home() {
@@ -28,9 +29,9 @@ export default function Home() {
 
     const features = [
         {
-            icon: FileSpreadsheet,
-            title: 'Multi-Sheet Intelligence',
-            description: 'AI analyzes and joins data across multiple Excel sheets automatically'
+            icon: Files,
+            title: 'Multi-File Intelligence',
+            description: 'AI analyzes and joins data across multiple Excel files with context-aware matching'
         },
         {
             icon: RefreshCw,
@@ -53,17 +54,17 @@ export default function Home() {
         <main className="flex-1">
             {/* Hero Section */}
             <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
-                {/* Background gradient orbs */}
+                {/* Background gradient orbs - Neon Green */}
                 <div className="absolute inset-0 overflow-hidden">
-                    <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary-500/20 rounded-full blur-3xl animate-pulse-soft" />
-                    <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-primary-600/20 rounded-full blur-3xl animate-pulse-soft" style={{ animationDelay: '1s' }} />
+                    <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary-400/20 rounded-full blur-3xl animate-pulse-soft" />
+                    <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-primary-500/20 rounded-full blur-3xl animate-pulse-soft" style={{ animationDelay: '1s' }} />
                 </div>
 
                 <div className="relative z-10 max-w-6xl mx-auto px-6 py-20 text-center">
                     {/* Badge */}
-                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-500/10 border border-primary-500/20 mb-8">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-400/10 border border-primary-400/20 mb-8">
                         <Sparkles className="w-4 h-4 text-primary-400" />
-                        <span className="text-sm text-primary-300">Powered by Gemini AI</span>
+                        <span className="text-sm text-primary-400">Powered by Gemini AI</span>
                     </div>
 
                     {/* Main heading */}
@@ -141,9 +142,9 @@ export default function Home() {
                         {features.map((feature, index) => (
                             <div
                                 key={index}
-                                className="glass-card p-8 group hover:border-primary-500/30 transition-all duration-300"
+                                className="glass-card p-8 group hover:border-primary-400/30 transition-all duration-300"
                             >
-                                <div className="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center mb-4 group-hover:bg-primary-500/20 transition-colors">
+                                <div className="w-12 h-12 rounded-xl bg-primary-400/10 flex items-center justify-center mb-4 group-hover:bg-primary-400/20 transition-colors">
                                     <feature.icon className="w-6 h-6 text-primary-400" />
                                 </div>
                                 <h3 className="text-xl font-semibold text-white mb-2">
@@ -159,7 +160,7 @@ export default function Home() {
             </section>
 
             {/* How it Works */}
-            <section className="py-20 px-6 bg-dark-900/50">
+            <section className="py-20 px-6 bg-dark-800/50">
                 <div className="max-w-6xl mx-auto">
                     <div className="text-center mb-16">
                         <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
@@ -176,13 +177,13 @@ export default function Home() {
                             },
                             {
                                 step: '02',
-                                title: 'Select',
-                                description: 'Choose Excel files from your Drive to create dashboards'
+                                title: 'Select & Describe',
+                                description: 'Choose Excel files and add context to help AI understand your data'
                             },
                             {
                                 step: '03',
                                 title: 'Visualize',
-                                description: 'AI cleans data and generates beautiful charts instantly'
+                                description: 'AI cleans, joins, and generates beautiful charts instantly'
                             }
                         ].map((item, index) => (
                             <div key={index} className="text-center">
@@ -216,3 +217,4 @@ export default function Home() {
         </main>
     )
 }
+

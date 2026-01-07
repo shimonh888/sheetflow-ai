@@ -12,18 +12,20 @@ import {
     Folder,
     ChevronLeft,
     Search,
-    AlertTriangle
+    AlertTriangle,
+    Check,
+    Files
 } from 'lucide-react'
 import DashboardCard from '@/components/DashboardCard'
 import LoadingSpinner from '@/components/LoadingSpinner'
 import {
     listDashboards,
     listDriveFiles,
-    createDashboard,
     deleteDashboard,
     getCurrentUser,
     Dashboard,
-    DriveFile
+    DriveFile,
+    FileSourceCreate
 } from '@/lib/api'
 
 // Debounce hook for search
@@ -48,6 +50,10 @@ interface FolderBreadcrumb {
     name: string
 }
 
+interface SelectedFile extends DriveFile {
+    context: string
+}
+
 export default function DashboardsPage() {
     const router = useRouter()
     const [dashboards, setDashboards] = useState<Dashboard[]>([])
@@ -58,7 +64,8 @@ export default function DashboardsPage() {
     const [showFilePicker, setShowFilePicker] = useState(false)
     const [driveFiles, setDriveFiles] = useState<DriveFile[]>([])
     const [isLoadingFiles, setIsLoadingFiles] = useState(false)
-    const [isCreating, setIsCreating] = useState(false)
+    const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([])
+    const [globalDescription, setGlobalDescription] = useState('')
 
     // Folder navigation state
     const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
@@ -141,6 +148,8 @@ export default function DashboardsPage() {
         setCurrentFolderId(null)
         setFolderStack([{ id: null, name: 'My Drive' }])
         setSearchQuery('')
+        setSelectedFiles([])
+        setGlobalDescription('')
     }
 
     const closeFilePicker = () => {
@@ -148,6 +157,8 @@ export default function DashboardsPage() {
         setSearchQuery('')
         setCurrentFolderId(null)
         setFolderStack([{ id: null, name: 'My Drive' }])
+        setSelectedFiles([])
+        setGlobalDescription('')
     }
 
     const navigateToFolder = (file: DriveFile) => {
@@ -171,15 +182,47 @@ export default function DashboardsPage() {
         setCurrentFolderId(newStack[newStack.length - 1].id)
     }
 
-    const handleSelectFile = async (file: DriveFile) => {
+    const toggleFileSelection = (file: DriveFile) => {
         if (file.is_folder) {
             navigateToFolder(file)
             return
         }
 
-        // Navigate to preview page instead of creating immediately
+        setSelectedFiles(prev => {
+            const isSelected = prev.some(f => f.id === file.id)
+            if (isSelected) {
+                return prev.filter(f => f.id !== file.id)
+            } else {
+                return [...prev, { ...file, context: '' }]
+            }
+        })
+    }
+
+    const updateFileContext = (fileId: string, context: string) => {
+        setSelectedFiles(prev => prev.map(f =>
+            f.id === fileId ? { ...f, context } : f
+        ))
+    }
+
+    const removeSelectedFile = (fileId: string) => {
+        setSelectedFiles(prev => prev.filter(f => f.id !== fileId))
+    }
+
+    const handleProceedToPreview = () => {
+        if (selectedFiles.length === 0) return
+
+        // Store selected files in sessionStorage for the preview page
+        const filesData: FileSourceCreate[] = selectedFiles.map(f => ({
+            file_id: f.id,
+            file_name: f.name,
+            file_context: f.context || null
+        }))
+
+        sessionStorage.setItem('sheetflow_selected_files', JSON.stringify(filesData))
+        sessionStorage.setItem('sheetflow_global_description', globalDescription)
+
         closeFilePicker()
-        router.push(`/dashboard/preview/${file.id}?name=${encodeURIComponent(file.name)}`)
+        router.push('/dashboard/preview/multi')
     }
 
     // Delete handlers
@@ -293,7 +336,7 @@ export default function DashboardsPage() {
                             No Dashboards Yet
                         </h2>
                         <p className="text-dark-400 mb-6">
-                            Create your first dashboard by selecting an Excel file from Google Drive.
+                            Create your first dashboard by selecting Excel files from Google Drive.
                         </p>
                         <button
                             onClick={openFilePicker}
@@ -306,15 +349,20 @@ export default function DashboardsPage() {
                 )}
             </main>
 
-            {/* Enhanced File Picker Modal */}
+            {/* Multi-File Picker Modal */}
             {showFilePicker && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="glass-card w-full max-w-2xl max-h-[80vh] flex flex-col">
+                <div className="modal-backdrop">
+                    <div className="glass-card w-full max-w-4xl max-h-[90vh] flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between p-6 border-b border-white/10">
-                            <h2 className="text-xl font-semibold text-white">
-                                Select Excel File from Drive
-                            </h2>
+                            <div>
+                                <h2 className="text-xl font-semibold text-white">
+                                    Select Excel Files
+                                </h2>
+                                <p className="text-sm text-dark-400 mt-1">
+                                    Select one or more files to create your dashboard
+                                </p>
+                            </div>
                             <button
                                 onClick={closeFilePicker}
                                 className="p-2 rounded-lg hover:bg-white/5 text-dark-300 hover:text-white transition-colors"
@@ -323,96 +371,180 @@ export default function DashboardsPage() {
                             </button>
                         </div>
 
-                        {/* Search Bar */}
-                        <div className="px-6 py-3 border-b border-white/10">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400" />
-                                <input
-                                    type="text"
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    placeholder="Search files..."
-                                    className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:border-primary-500/50 transition-colors"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Breadcrumbs */}
-                        {!searchQuery && (
-                            <div className="px-6 py-2 border-b border-white/10 flex items-center gap-2 text-sm overflow-x-auto">
-                                {folderStack.length > 1 && (
-                                    <button
-                                        onClick={navigateBack}
-                                        className="p-1 rounded hover:bg-white/5 text-dark-300 hover:text-white transition-colors flex-shrink-0"
-                                    >
-                                        <ChevronLeft className="w-4 h-4" />
-                                    </button>
-                                )}
-                                {folderStack.map((folder, index) => (
-                                    <div key={folder.id ?? 'root'} className="flex items-center gap-2 flex-shrink-0">
-                                        {index > 0 && <span className="text-dark-500">/</span>}
-                                        <button
-                                            onClick={() => navigateToBreadcrumb(index)}
-                                            className={`hover:text-primary-400 transition-colors ${index === folderStack.length - 1
-                                                ? 'text-white font-medium'
-                                                : 'text-dark-400'
-                                                }`}
-                                        >
-                                            {folder.name}
-                                        </button>
+                        <div className="flex-1 flex overflow-hidden">
+                            {/* Left Panel - File Browser */}
+                            <div className="flex-1 flex flex-col border-r border-white/10">
+                                {/* Search Bar */}
+                                <div className="px-4 py-3 border-b border-white/10">
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400" />
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Search files..."
+                                            className="input-field pl-10"
+                                        />
                                     </div>
-                                ))}
-                            </div>
-                        )}
+                                </div>
 
-                        {/* File List */}
-                        <div className="flex-1 overflow-y-auto p-6">
-                            {isLoadingFiles ? (
-                                <LoadingSpinner message="Loading files from Google Drive..." />
-                            ) : driveFiles.length > 0 ? (
-                                <div className="space-y-2">
-                                    {driveFiles.map((file) => (
-                                        <button
-                                            key={file.id}
-                                            onClick={() => handleSelectFile(file)}
-                                            disabled={isCreating && !file.is_folder}
-                                            className="w-full flex items-center gap-4 p-4 rounded-xl hover:bg-white/5 transition-colors text-left disabled:opacity-50"
-                                        >
-                                            {file.is_folder ? (
-                                                <Folder className="w-8 h-8 text-yellow-400 flex-shrink-0" />
-                                            ) : (
-                                                <FileSpreadsheet className="w-8 h-8 text-green-400 flex-shrink-0" />
-                                            )}
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-white font-medium truncate">
-                                                    {file.name}
-                                                </p>
-                                                <p className="text-sm text-dark-400">
-                                                    {file.is_folder
-                                                        ? 'Folder'
-                                                        : (
-                                                            <>
-                                                                {file.modified_time
-                                                                    ? new Date(file.modified_time).toLocaleDateString()
-                                                                    : 'Unknown date'}
-                                                                {file.size && ` • ${(file.size / 1024).toFixed(1)} KB`}
-                                                            </>
-                                                        )}
-                                                </p>
+                                {/* Breadcrumbs */}
+                                {!searchQuery && (
+                                    <div className="px-4 py-2 border-b border-white/10 flex items-center gap-2 text-sm overflow-x-auto">
+                                        {folderStack.length > 1 && (
+                                            <button
+                                                onClick={navigateBack}
+                                                className="p-1 rounded hover:bg-white/5 text-dark-300 hover:text-white transition-colors flex-shrink-0"
+                                            >
+                                                <ChevronLeft className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                        {folderStack.map((folder, index) => (
+                                            <div key={folder.id ?? 'root'} className="flex items-center gap-2 flex-shrink-0">
+                                                {index > 0 && <span className="text-dark-500">/</span>}
+                                                <button
+                                                    onClick={() => navigateToBreadcrumb(index)}
+                                                    className={`hover:text-primary-400 transition-colors ${index === folderStack.length - 1
+                                                        ? 'text-white font-medium'
+                                                        : 'text-dark-400'
+                                                        }`}
+                                                >
+                                                    {folder.name}
+                                                </button>
                                             </div>
-                                        </button>
-                                    ))}
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* File List */}
+                                <div className="flex-1 overflow-y-auto p-4">
+                                    {isLoadingFiles ? (
+                                        <LoadingSpinner message="Loading files..." />
+                                    ) : driveFiles.length > 0 ? (
+                                        <div className="space-y-2">
+                                            {driveFiles.map((file) => {
+                                                const isSelected = selectedFiles.some(f => f.id === file.id)
+                                                return (
+                                                    <button
+                                                        key={file.id}
+                                                        onClick={() => toggleFileSelection(file)}
+                                                        className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all text-left ${isSelected
+                                                            ? 'bg-primary-400/10 border border-primary-400/30'
+                                                            : 'hover:bg-white/5 border border-transparent'
+                                                            }`}
+                                                    >
+                                                        {file.is_folder ? (
+                                                            <Folder className="w-8 h-8 text-yellow-400 flex-shrink-0" />
+                                                        ) : (
+                                                            <FileSpreadsheet className="w-8 h-8 text-primary-400 flex-shrink-0" />
+                                                        )}
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-white font-medium truncate">
+                                                                {file.name}
+                                                            </p>
+                                                            <p className="text-sm text-dark-400">
+                                                                {file.is_folder ? 'Folder' : (
+                                                                    <>
+                                                                        {file.modified_time
+                                                                            ? new Date(file.modified_time).toLocaleDateString()
+                                                                            : 'Unknown date'}
+                                                                        {file.size && ` • ${(file.size / 1024).toFixed(1)} KB`}
+                                                                    </>
+                                                                )}
+                                                            </p>
+                                                        </div>
+                                                        {isSelected && !file.is_folder && (
+                                                            <Check className="w-5 h-5 text-primary-400 flex-shrink-0" />
+                                                        )}
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <div className="text-center py-8 text-dark-400">
+                                            <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                                            <p>
+                                                {searchQuery
+                                                    ? 'No files found matching your search'
+                                                    : 'No Excel files found in this folder'}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
-                            ) : (
-                                <div className="text-center py-8 text-dark-400">
-                                    <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                                    <p>
-                                        {searchQuery
-                                            ? 'No files found matching your search'
-                                            : 'No Excel files found in this folder'}
-                                    </p>
+                            </div>
+
+                            {/* Right Panel - Selected Files & Context */}
+                            <div className="w-80 flex flex-col bg-dark-800/50">
+                                <div className="p-4 border-b border-white/10">
+                                    <div className="flex items-center gap-2 text-white font-medium">
+                                        <Files className="w-5 h-5 text-primary-400" />
+                                        Selected Files ({selectedFiles.length})
+                                    </div>
                                 </div>
-                            )}
+
+                                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                    {selectedFiles.length > 0 ? (
+                                        <>
+                                            {/* Selected files with context */}
+                                            {selectedFiles.map((file) => (
+                                                <div key={file.id} className="file-card">
+                                                    <div className="flex items-start justify-between mb-2">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <FileSpreadsheet className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                                                            <span className="text-white text-sm font-medium truncate">
+                                                                {file.name}
+                                                            </span>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removeSelectedFile(file.id)}
+                                                            className="p-1 rounded hover:bg-white/10 text-dark-400 hover:text-white transition-colors flex-shrink-0"
+                                                        >
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                    <textarea
+                                                        value={file.context}
+                                                        onChange={(e) => updateFileContext(file.id, e.target.value)}
+                                                        placeholder="Add context about this file (e.g., 'This is my sales ledger')"
+                                                        className="textarea-field text-sm h-16"
+                                                    />
+                                                </div>
+                                            ))}
+
+                                            {/* Global Dashboard Purpose */}
+                                            <div className="pt-4 border-t border-white/10">
+                                                <label className="block text-sm font-medium text-white mb-2">
+                                                    Dashboard Purpose
+                                                </label>
+                                                <textarea
+                                                    value={globalDescription}
+                                                    onChange={(e) => setGlobalDescription(e.target.value)}
+                                                    placeholder="Describe the overall goal of this dashboard (e.g., 'Track sales performance across regions')"
+                                                    className="textarea-field text-sm h-24"
+                                                />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-center py-8 text-dark-400">
+                                            <Files className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                                            <p className="text-sm">
+                                                Select files from the list to add them to your dashboard
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Actions */}
+                                <div className="p-4 border-t border-white/10">
+                                    <button
+                                        onClick={handleProceedToPreview}
+                                        disabled={selectedFiles.length === 0}
+                                        className="btn-primary w-full justify-center"
+                                    >
+                                        Preview Dashboard
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -420,7 +552,7 @@ export default function DashboardsPage() {
 
             {/* Delete Confirmation Modal */}
             {deleteModal.isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                <div className="modal-backdrop">
                     <div className="glass-card w-full max-w-md p-6">
                         <div className="flex items-center gap-3 mb-4">
                             <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center">

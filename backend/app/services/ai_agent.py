@@ -36,8 +36,10 @@ def make_serializable(obj: Any) -> Any:
 
 class AgentState(TypedDict, total=False):
     """State passed through the LangGraph workflow."""
-    # Input
-    file_bytes: bytes
+    # Input - supports both single file and multi-file modes
+    file_bytes: bytes  # Single file mode (backwards compatible)
+    files_data: List[Dict[str, Any]]  # Multi-file mode: [{file_id, file_name, file_bytes, file_context}]
+    global_description: Optional[str]  # User context for the entire dashboard
     previous_schema: Dict[str, Dict[str, str]]
     accept_schema_drift: bool
     
@@ -60,6 +62,7 @@ class AgentState(TypedDict, total=False):
     
     # Internal (for passing data between nodes)
     _data_summary: Dict[str, Any]
+    _file_contexts: List[Dict[str, str]]  # [{file_name, file_context}]
 
 
 @dataclass  
@@ -200,7 +203,7 @@ class DataProcessingAgent:
         return state
     
     async def _analyze_data(self, state: AgentState) -> AgentState:
-        """Analyze data structure for visualization suggestions."""
+        """Analyze data structure with file contexts for visualization suggestions."""
         try:
             # Get data summary for AI analysis
             data = state.get("unified_data") or list(state["sheets"].values())[0] if state["sheets"] else []
@@ -220,6 +223,18 @@ class DataProcessingAgent:
                 "categorical_cols": [col for col in df.columns if df[col].dtype == 'object'],
                 "date_cols": [col for col in df.columns if pd.api.types.is_datetime64_any_dtype(df[col])]
             }
+            
+            # Build context section for AI from global description and file contexts
+            context_notes = []
+            if state.get("global_description"):
+                context_notes.append(f"Dashboard Purpose: {state['global_description']}")
+            
+            for file_info in state.get("_file_contexts", []):
+                if file_info.get("file_context"):
+                    context_notes.append(f"File '{file_info['file_name']}': {file_info['file_context']}")
+            
+            # Store context for chart generation
+            summary["user_context"] = "\n".join(context_notes) if context_notes else None
             
             # Store for chart generation
             state["_data_summary"] = summary
@@ -246,7 +261,16 @@ class DataProcessingAgent:
             # Generate chart suggestions with AI
             summary = state.get("_data_summary", {})
             
-            prompt = f"""Analyze this data and suggest 3-4 effective visualizations:
+            # Build context section for the prompt
+            context_section = ""
+            user_context = summary.get("user_context")
+            if user_context:
+                context_section = f"""USER CONTEXT (use this to understand column relationships and joining keys):
+{user_context}
+
+"""
+            
+            prompt = f"""{context_section}Analyze this data and suggest 3-4 effective visualizations:
 
 Columns: {summary.get('columns', [])}
 Data Types: {summary.get('dtypes', {})}
@@ -407,3 +431,135 @@ Focus on meaningful business insights. Be specific in your reasoning. JSON respo
             suggested_charts=final_state["chart_suggestions"],
             message="; ".join(final_state["messages"]) if final_state["messages"] else "Processing complete"
         )
+    
+    async def process_multiple_files(
+        self,
+        files_data: List[Dict[str, Any]],
+        global_description: Optional[str] = None,
+        previous_schema: Optional[Dict[str, Dict[str, str]]] = None,
+        accept_schema_drift: bool = True
+    ) -> ProcessingOutput:
+        """
+        Process multiple Excel files with context for intelligent joining.
+        
+        Args:
+            files_data: List of file info dicts with keys:
+                - file_id: Google Drive file ID
+                - file_name: Original file name
+                - file_bytes: Raw file bytes
+                - file_context: Optional user context about the file
+            global_description: User context for the entire dashboard
+            previous_schema: Previous column schema for drift detection
+            accept_schema_drift: Whether to auto-accept schema changes
+            
+        Returns:
+            ProcessingOutput with results from all files combined
+        """
+        import io
+        
+        # If only one file, use the simpler single-file method with context
+        if len(files_data) == 1:
+            file_info = files_data[0]
+            initial_state: AgentState = {
+                "file_bytes": file_info["file_bytes"],
+                "global_description": global_description,
+                "previous_schema": previous_schema or {},
+                "accept_schema_drift": accept_schema_drift,
+                "sheets": {},
+                "unified_data": None,
+                "current_schema": {},
+                "drift_reports": [],
+                "schema_drift_detected": False,
+                "chart_suggestions": [],
+                "chart_data": {},
+                "messages": [],
+                "errors": [],
+                "_file_contexts": [{"file_name": file_info["file_name"], "file_context": file_info.get("file_context")}],
+            }
+            
+            final_state = await self.graph.ainvoke(initial_state)
+            
+            return ProcessingOutput(
+                sheet_names=list(final_state["sheets"].keys()),
+                new_schema=final_state["current_schema"],
+                schema_drift_detected=final_state["schema_drift_detected"],
+                schema_drift_info=final_state["drift_reports"] if final_state["schema_drift_detected"] else None,
+                chart_data=final_state["chart_data"],
+                suggested_charts=final_state["chart_suggestions"],
+                message="; ".join(final_state["messages"]) if final_state["messages"] else "Processing complete"
+            )
+        
+        # Multi-file processing: load all sheets from all files
+        all_sheets = {}
+        file_contexts = []
+        all_sheet_names = []
+        
+        for file_info in files_data:
+            try:
+                sheets = self.data_processor.load_all_sheets(file_info["file_bytes"])
+                # Prefix sheet names with file name to avoid collisions
+                file_prefix = file_info["file_name"].rsplit(".", 1)[0]  # Remove extension
+                for sheet_name, df in sheets.items():
+                    prefixed_name = f"{file_prefix}_{sheet_name}"
+                    all_sheets[prefixed_name] = make_serializable(df.to_dict(orient='records'))
+                    all_sheet_names.append(prefixed_name)
+                
+                # Store file context
+                file_contexts.append({
+                    "file_name": file_info["file_name"],
+                    "file_context": file_info.get("file_context")
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to load file {file_info['file_name']}: {e}")
+        
+        if not all_sheets:
+            return ProcessingOutput(
+                sheet_names=[],
+                new_schema={},
+                schema_drift_detected=False,
+                schema_drift_info=None,
+                chart_data={},
+                suggested_charts=[],
+                message="No data could be loaded from any files"
+            )
+        
+        # Combine all data for unified processing
+        all_records = []
+        for records in all_sheets.values():
+            all_records.extend(records)
+        
+        # Build state with combined data
+        initial_state: AgentState = {
+            "file_bytes": b"",  # Not used in multi-file mode
+            "files_data": files_data,
+            "global_description": global_description,
+            "previous_schema": previous_schema or {},
+            "accept_schema_drift": accept_schema_drift,
+            "sheets": all_sheets,
+            "unified_data": all_records[:10000] if all_records else None,  # Limit for performance
+            "current_schema": {},
+            "drift_reports": [],
+            "schema_drift_detected": False,
+            "chart_suggestions": [],
+            "chart_data": {},
+            "messages": [f"Loaded {len(files_data)} files with {len(all_sheets)} total sheets"],
+            "errors": [],
+            "_file_contexts": file_contexts,
+        }
+        
+        # Skip load_sheets and clean_data, go directly to analysis
+        # Run analyze_data and generate_charts manually
+        state = await self._analyze_data(initial_state)
+        state = await self._generate_charts(state)
+        
+        return ProcessingOutput(
+            sheet_names=all_sheet_names,
+            new_schema=state.get("current_schema", {}),
+            schema_drift_detected=state.get("schema_drift_detected", False),
+            schema_drift_info=state.get("drift_reports") if state.get("schema_drift_detected") else None,
+            chart_data=state.get("chart_data", {}),
+            suggested_charts=state.get("chart_suggestions", []),
+            message="; ".join(state.get("messages", [])) if state.get("messages") else "Multi-file processing complete"
+        )
+

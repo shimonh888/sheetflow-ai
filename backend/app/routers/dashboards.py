@@ -10,10 +10,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User, Dashboard
+from app.models import User, Dashboard, FileSource
 from app.schemas import (
     DashboardCreate, 
     DashboardUpdate, 
@@ -83,27 +84,38 @@ async def preview_dashboard(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Analyze file and return chart proposals for user review.
+    Analyze multiple files and return chart proposals for user review.
     
     Does NOT create a dashboard - just returns AI suggestions
     that the user can edit before finalizing.
     """
-    # 1. Download file from Drive
+    # 1. Download all files from Drive
     drive_service = GoogleDriveService(current_user)
+    files_data = []
     
     try:
-        file_bytes = await drive_service.download_file(data.file_id)
+        for file in data.files:
+            file_bytes = await drive_service.download_file(file.file_id)
+            files_data.append({
+                "file_id": file.file_id,
+                "file_name": file.file_name,
+                "file_bytes": file_bytes,
+                "file_context": file.file_context
+            })
     except Exception as e:
-        logger.error(f"Failed to download file: {e}")
+        logger.error(f"Failed to download files: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to download file: {str(e)}"
+            detail=f"Failed to download files: {str(e)}"
         )
     
-    # 2. Run AI agent to get chart proposals
+    # 2. Run AI agent with multi-file context support
     try:
         agent = DataProcessingAgent(gemini_api_key=settings.GEMINI_API_KEY)
-        result = await agent.process_excel(file_bytes=file_bytes)
+        result = await agent.process_multiple_files(
+            files_data=files_data,
+            global_description=data.global_description
+        )
         
         # 3. Convert suggestions to ChartProposal format
         proposals = []
@@ -142,11 +154,13 @@ async def preview_dashboard(
                     row_count=len(df)
                 )
         
-        logger.info(f"Generated {len(proposals)} chart proposals for file {data.file_id}")
+        # Use first file's info for response (backwards compatible)
+        first_file = data.files[0] if data.files else None
+        logger.info(f"Generated {len(proposals)} chart proposals for {len(data.files)} files")
         
         return PreviewResponse(
-            file_id=data.file_id,
-            file_name=data.file_name,
+            file_id=first_file.file_id if first_file else "",
+            file_name=first_file.file_name if first_file else "",
             sheet_names=result.sheet_names,
             proposals=proposals,
             data_summary=data_summary,
@@ -154,10 +168,10 @@ async def preview_dashboard(
         )
         
     except Exception as e:
-        logger.error(f"Failed to process file: {e}")
+        logger.error(f"Failed to process files: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to analyze file: {str(e)}"
+            detail=f"Failed to analyze files: {str(e)}"
         )
 
 
@@ -178,6 +192,7 @@ async def list_dashboards(
     query = (
         select(Dashboard)
         .where(Dashboard.user_id == current_user.id)
+        .options(selectinload(Dashboard.file_sources))
         .order_by(Dashboard.updated_at.desc())
         .offset(offset)
         .limit(page_size)
@@ -200,31 +215,59 @@ async def create_dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Create a new dashboard from a Google Drive Excel file.
+    Create a new dashboard from multiple Google Drive Excel files.
     
     This will:
     1. Verify file access in Google Drive
-    2. Create dashboard record
+    2. Create dashboard record with file sources
     3. Trigger initial data processing
     """
-    # Verify file exists and get metadata
-    drive_service = GoogleDriveService(current_user)
-    file_metadata = await drive_service.get_file_metadata(data.file_id)
+    if not data.files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file is required"
+        )
     
-    # Create dashboard
+    # Verify first file exists and get metadata
+    drive_service = GoogleDriveService(current_user)
+    first_file = data.files[0]
+    file_metadata = await drive_service.get_file_metadata(first_file.file_id)
+    
+    # Create dashboard with first file info (backwards compatible)
     dashboard = Dashboard(
         user_id=current_user.id,
-        file_id=data.file_id,
+        file_id=first_file.file_id,
         file_name=file_metadata["name"],
         mime_type=file_metadata.get("mimeType"),
         title=data.title or file_metadata["name"],
+        global_description=data.global_description,
     )
     
     db.add(dashboard)
+    await db.flush()  # Get dashboard.id before creating file sources
+    
+    # Create file sources for all files
+    for file in data.files:
+        file_source = FileSource(
+            dashboard_id=dashboard.id,
+            file_id=file.file_id,
+            file_name=file.file_name,
+            file_context=file.file_context,
+        )
+        db.add(file_source)
+    
     await db.commit()
     await db.refresh(dashboard)
     
-    logger.info(f"Created dashboard {dashboard.id} for file {data.file_id}")
+    # Re-query with eager loading to avoid async issues
+    result = await db.execute(
+        select(Dashboard)
+        .where(Dashboard.id == dashboard.id)
+        .options(selectinload(Dashboard.file_sources))
+    )
+    dashboard = result.scalar_one()
+    
+    logger.info(f"Created dashboard {dashboard.id} with {len(data.files)} file sources")
     
     return dashboard
 
@@ -237,10 +280,12 @@ async def get_dashboard(
 ):
     """Get a specific dashboard."""
     result = await db.execute(
-        select(Dashboard).where(
+        select(Dashboard)
+        .where(
             Dashboard.id == dashboard_id,
             Dashboard.user_id == current_user.id
         )
+        .options(selectinload(Dashboard.file_sources))
     )
     dashboard = result.scalar_one_or_none()
     
@@ -262,10 +307,12 @@ async def update_dashboard(
 ):
     """Update dashboard settings."""
     result = await db.execute(
-        select(Dashboard).where(
+        select(Dashboard)
+        .where(
             Dashboard.id == dashboard_id,
             Dashboard.user_id == current_user.id
         )
+        .options(selectinload(Dashboard.file_sources))
     )
     dashboard = result.scalar_one_or_none()
     
@@ -325,12 +372,12 @@ async def refresh_dashboard(
     Refresh dashboard by fetching latest Excel data from Google Drive.
     
     This endpoint:
-    1. Fetches the latest version of the Excel file from Google Drive
-    2. Triggers the AI Agent to re-process the file (multi-sheet, cleaning, schema mapping)
+    1. Fetches the latest version of all Excel files from Google Drive
+    2. Triggers the AI Agent to re-process with file contexts
     3. Detects schema drift and attempts auto-remapping
     4. Returns updated JSON data for the charts
     """
-    # Get dashboard
+    # Get dashboard with file sources eagerly loaded
     result = await db.execute(
         select(Dashboard).where(
             Dashboard.id == dashboard_id,
@@ -346,23 +393,50 @@ async def refresh_dashboard(
         )
     
     try:
-        # 1. Download latest Excel from Google Drive
-        logger.info(f"Refreshing dashboard {dashboard_id}, file: {dashboard.file_id}")
         drive_service = GoogleDriveService(current_user)
-        file_bytes = await drive_service.download_file(dashboard.file_id)
         
-        # 2. Get previous schema for drift detection
+        # Fetch all file sources for this dashboard
+        file_sources_result = await db.execute(
+            select(FileSource).where(FileSource.dashboard_id == dashboard.id)
+        )
+        file_sources = file_sources_result.scalars().all()
+        
+        # Build files_data with context from file sources
+        files_data = []
+        if file_sources:
+            logger.info(f"Refreshing dashboard {dashboard_id} with {len(file_sources)} file sources")
+            for fs in file_sources:
+                file_bytes = await drive_service.download_file(fs.file_id)
+                files_data.append({
+                    "file_id": fs.file_id,
+                    "file_name": fs.file_name,
+                    "file_bytes": file_bytes,
+                    "file_context": fs.file_context
+                })
+        else:
+            # Fallback to single file mode for backwards compatibility
+            logger.info(f"Refreshing dashboard {dashboard_id}, file: {dashboard.file_id}")
+            file_bytes = await drive_service.download_file(dashboard.file_id)
+            files_data.append({
+                "file_id": dashboard.file_id,
+                "file_name": dashboard.file_name,
+                "file_bytes": file_bytes,
+                "file_context": None
+            })
+        
+        # Get previous schema for drift detection
         previous_schema = dashboard.column_schema or {}
         
-        # 3. Process data with AI Agent
+        # Process data with AI Agent using multi-file context
         agent = DataProcessingAgent(gemini_api_key=settings.GEMINI_API_KEY)
-        processing_result = await agent.process_excel(
-            file_bytes=file_bytes,
+        processing_result = await agent.process_multiple_files(
+            files_data=files_data,
+            global_description=dashboard.global_description,
             previous_schema=previous_schema,
             accept_schema_drift=request.accept_schema_drift
         )
         
-        # 4. Update dashboard
+        # Update dashboard
         dashboard.sheet_names = processing_result.sheet_names
         dashboard.column_schema = processing_result.new_schema
         dashboard.cached_data = processing_result.chart_data
@@ -371,7 +445,7 @@ async def refresh_dashboard(
         dashboard.last_sync_message = processing_result.message
         dashboard.updated_at = datetime.utcnow()
         
-# Update dashboard config if AI suggested charts
+        # Update dashboard config if AI suggested charts
         if processing_result.suggested_charts:
             dashboard.dashboard_config = {
                 **(dashboard.dashboard_config or {}),

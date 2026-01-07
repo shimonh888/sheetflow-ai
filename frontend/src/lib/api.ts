@@ -68,13 +68,35 @@ export async function getCurrentUser(): Promise<any> {
     return fetchWithAuth('/api/auth/me')
 }
 
-// Dashboards
+// ============================================================================
+// FileSource Types (Multi-File Support)
+// ============================================================================
+
+export interface FileSourceCreate {
+    file_id: string
+    file_name: string
+    file_context?: string | null
+}
+
+export interface FileSourceResponse {
+    id: string
+    file_id: string
+    file_name: string
+    file_context: string | null
+    sheet_names: string[]
+}
+
+// ============================================================================
+// Dashboard Types
+// ============================================================================
+
 export interface Dashboard {
     id: string
     file_id: string
     file_name: string
     title: string | null
     description: string | null
+    global_description: string | null
     sheet_names: string[]
     dashboard_config: any
     last_synced: string | null
@@ -83,6 +105,7 @@ export interface Dashboard {
     is_public: boolean
     created_at: string
     updated_at: string
+    file_sources: FileSourceResponse[]
 }
 
 export interface DashboardListResponse {
@@ -103,11 +126,12 @@ export async function getDashboard(id: string): Promise<Dashboard> {
     return fetchWithAuth(`/api/dashboards/${id}`)
 }
 
+// Updated: Create dashboard with files list
 export async function createDashboard(data: {
-    file_id: string
-    file_name: string
+    files: FileSourceCreate[]
     title?: string
-    charts?: ChartProposal[]  // User-edited chart configs
+    global_description?: string
+    charts?: ChartProposal[]
 }): Promise<Dashboard> {
     return fetchWithAuth('/api/dashboards', {
         method: 'POST',
@@ -119,7 +143,10 @@ export async function deleteDashboard(id: string): Promise<void> {
     await fetchWithAuth(`/api/dashboards/${id}`, { method: 'DELETE' })
 }
 
-// Chart Preview
+// ============================================================================
+// Chart Preview Types
+// ============================================================================
+
 export interface ChartProposal {
     id: string
     type: 'bar' | 'line' | 'pie' | 'area' | 'scatter'
@@ -148,17 +175,26 @@ export interface PreviewResponse {
     preview_data: any
 }
 
+// Updated: Preview with multi-file support
 export async function previewDashboard(
-    fileId: string,
-    fileName: string
+    files: FileSourceCreate[],
+    globalDescription?: string
 ): Promise<PreviewResponse> {
     return fetchWithAuth('/api/dashboards/preview', {
         method: 'POST',
         body: JSON.stringify({
-            file_id: fileId,
-            file_name: fileName
+            files,
+            global_description: globalDescription
         }),
     })
+}
+
+// Legacy single-file preview (backwards compatible)
+export async function previewSingleFile(
+    fileId: string,
+    fileName: string
+): Promise<PreviewResponse> {
+    return previewDashboard([{ file_id: fileId, file_name: fileName }])
 }
 
 export interface RefreshResponse {
@@ -191,7 +227,10 @@ export async function getDashboardData(id: string): Promise<{
     return fetchWithAuth(`/api/dashboards/${id}/data`)
 }
 
-// Drive files
+// ============================================================================
+// Drive Files
+// ============================================================================
+
 export interface DriveFile {
     id: string
     name: string

@@ -3,78 +3,114 @@
 @tailwind utilities;
 
 :root {
+  /* Adobe Color Palette */
+  --color-primary: #14FF6E;
+  --color-primary-hover: #10cc58;
+  --color-secondary: #34D572;
+  --color-tertiary: #46AA6C;
+  --color-dark-bg: #2D332F;
+  --color-dark-surface: #1a1f1c;
+  --color-dark-border: rgba(255, 255, 255, 0.1);
+
   --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 15, 23, 42;
-  --background-end-rgb: 2, 6, 23;
+  --background-start-rgb: 26, 31, 28;
+  --background-end-rgb: 15, 18, 16;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-    to bottom,
-    rgb(var(--background-start-rgb)),
-    rgb(var(--background-end-rgb))
-  );
+  background: linear-gradient(to bottom,
+      rgb(var(--background-start-rgb)),
+      rgb(var(--background-end-rgb)));
   min-height: 100vh;
   font-family: 'Inter', system-ui, sans-serif;
 }
 
-/* Glassmorphism card */
+/* Glassmorphism card with Adobe theme */
 .glass-card {
-  @apply bg-white/5 backdrop-blur-lg border border-white/10 rounded-2xl;
+  @apply bg-dark-800/80 backdrop-blur-lg border border-white/10 rounded-2xl;
 }
 
-/* Gradient text */
+/* Gradient text with Neon Green */
 .gradient-text {
   @apply bg-gradient-to-r from-primary-400 via-primary-500 to-primary-600 bg-clip-text text-transparent;
 }
 
-/* Button styles */
+/* Primary button - Neon Green */
 .btn-primary {
-  @apply px-6 py-3 bg-gradient-to-r from-primary-500 to-primary-600 
-         hover:from-primary-600 hover:to-primary-700
-         text-white font-semibold rounded-xl
-         transform transition-all duration-200
-         hover:scale-105 hover:shadow-lg hover:shadow-primary-500/25
-         active:scale-95
-         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
+  @apply px-6 py-3 bg-primary-400 hover:bg-[#10cc58] text-black font-semibold rounded-xl transform transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-primary-400/25 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
 }
 
+/* Secondary button */
 .btn-secondary {
-  @apply px-6 py-3 bg-white/10 hover:bg-white/20
-         text-white font-semibold rounded-xl
-         border border-white/20
-         transform transition-all duration-200
-         hover:scale-105
-         active:scale-95;
+  @apply px-6 py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-xl border border-white/20 transform transition-all duration-200 hover:scale-105 active:scale-95;
 }
 
-/* Loading spinner */
+/* Danger button */
+.btn-danger {
+  @apply px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-medium rounded-lg border border-red-500/20 transition-all duration-200 hover:border-red-500/40;
+}
+
+/* Loading spinner with Neon Green */
 .spinner {
   @apply animate-spin rounded-full border-2 border-white/20 border-t-primary-400;
 }
 
-/* Chart container */
+/* Chart card container */
 .chart-card {
-  @apply glass-card p-6 transition-all duration-300
-         hover:border-primary-500/30 hover:shadow-lg hover:shadow-primary-500/10;
+  @apply glass-card p-6 transition-all duration-300 hover:border-primary-400/30 hover:shadow-lg hover:shadow-primary-400/10;
 }
 
-/* Scrollbar */
+/* Input fields */
+.input-field {
+  @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-dark-400 focus:outline-none focus:border-primary-400/50 focus:ring-1 focus:ring-primary-400/25 transition-colors;
+}
+
+/* Textarea fields */
+.textarea-field {
+  @apply w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-dark-400 resize-none focus:outline-none focus:border-primary-400/50 focus:ring-1 focus:ring-primary-400/25 transition-colors;
+}
+
+/* File card for multi-file selection */
+.file-card {
+  @apply bg-dark-800 rounded-xl border border-white/10 p-4 transition-all duration-200 hover:border-primary-400/30;
+}
+
+/* Selected file card */
+.file-card-selected {
+  @apply border-primary-400/50 bg-primary-400/5;
+}
+
+/* Scrollbar with theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-dark-800;
+  @apply bg-dark-900;
 }
 
 ::-webkit-scrollbar-thumb {
   @apply bg-dark-600 rounded-full hover:bg-dark-500;
 }
 
-/* Selection */
+/* Selection highlight */
 ::selection {
-  @apply bg-primary-500/30;
+  @apply bg-primary-400/30;
+}
+
+/* Trash icon style */
+.trash-icon {
+  @apply text-primary-400 hover:text-primary-300 transition-colors;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  @apply fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm;
+}
+
+/* Modal container */
+.modal-container {
+  @apply glass-card w-full max-w-md p-6;
 }

@@ -81,6 +81,7 @@ class Dashboard(Base):
     # Metadata
     title = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
+    global_description = Column(Text, nullable=True)  # User context for AI understanding
     is_public = Column(Boolean, default=False)
     last_synced = Column(DateTime(timezone=True), nullable=True)
     last_sync_status = Column(String(50), nullable=True)  # success, error, schema_drift
@@ -90,6 +91,7 @@ class Dashboard(Base):
     
     # Relationships
     user = relationship("User", back_populates="dashboards")
+    file_sources = relationship("FileSource", back_populates="dashboard", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Dashboard {self.title or self.file_name}>"
@@ -101,10 +103,55 @@ class Dashboard(Base):
             "file_id": self.file_id,
             "file_name": self.file_name,
             "title": self.title or self.file_name,
+            "global_description": self.global_description,
             "sheet_names": self.sheet_names or [],
             "dashboard_config": self.dashboard_config or {},
             "cached_data": self.cached_data,
             "last_synced": self.last_synced.isoformat() if self.last_synced else None,
             "last_sync_status": self.last_sync_status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "file_sources": [fs.to_dict() for fs in self.file_sources] if self.file_sources else [],
+        }
+
+
+class FileSource(Base):
+    """
+    File source for multi-file dashboards.
+    
+    Each dashboard can have multiple file sources, each with
+    context annotations to help the AI understand the data.
+    """
+    __tablename__ = "file_sources"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dashboard_id = Column(UUID(as_uuid=True), ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False)
+    
+    # Google Drive file info
+    file_id = Column(String(255), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    
+    # User-provided context for AI understanding
+    # e.g., "This file contains stock tickers in 'Symbol' column"
+    file_context = Column(Text, nullable=True)
+    
+    # Sheet names discovered in this file
+    sheet_names = Column(ARRAY(String), nullable=True, default=list)
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    # Relationships
+    dashboard = relationship("Dashboard", back_populates="file_sources")
+    
+    def __repr__(self):
+        return f"<FileSource {self.file_name}>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API responses."""
+        return {
+            "id": str(self.id),
+            "file_id": self.file_id,
+            "file_name": self.file_name,
+            "file_context": self.file_context,
+            "sheet_names": self.sheet_names or [],
         }

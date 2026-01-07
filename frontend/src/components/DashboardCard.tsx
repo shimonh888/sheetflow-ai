@@ -1,8 +1,14 @@
 'use client'
 
 import Link from 'next/link'
-import { FileSpreadsheet, Clock, BarChart2, Trash2 } from 'lucide-react'
+import { FileSpreadsheet, Clock, BarChart2, Trash2, Files } from 'lucide-react'
 import clsx from 'clsx'
+
+interface FileSource {
+    id: string
+    file_name: string
+    file_context: string | null
+}
 
 interface Dashboard {
     id: string
@@ -11,6 +17,7 @@ interface Dashboard {
     sheet_names?: string[]
     last_synced?: string
     last_sync_status?: string
+    file_sources?: FileSource[]
 }
 
 interface DashboardCardProps {
@@ -30,7 +37,7 @@ export default function DashboardCard({ dashboard, onDelete }: DashboardCardProp
     }
 
     const statusColors = {
-        success: 'text-green-400',
+        success: 'text-primary-400',
         error: 'text-red-400',
         schema_drift: 'text-yellow-400',
     }
@@ -43,14 +50,16 @@ export default function DashboardCard({ dashboard, onDelete }: DashboardCardProp
         }
     }
 
+    const fileCount = dashboard.file_sources?.length || 1
+
     return (
         <Link href={`/dashboard/${dashboard.id}`}>
-            <div className="glass-card p-6 group cursor-pointer hover:border-primary-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary-500/10 relative">
-                {/* Delete button */}
+            <div className="glass-card p-6 group cursor-pointer hover:border-primary-400/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary-400/10 relative">
+                {/* Delete button - Neon Green theme */}
                 {onDelete && (
                     <button
                         onClick={handleDelete}
-                        className="absolute top-4 right-4 p-2 rounded-lg bg-red-500/10 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 transition-all duration-200 z-10"
+                        className="absolute top-4 right-4 p-2 rounded-lg bg-primary-400/10 text-primary-400 opacity-0 group-hover:opacity-100 hover:bg-primary-400/20 transition-all duration-200 z-10"
                         title="Delete dashboard"
                     >
                         <Trash2 className="w-4 h-4" />
@@ -58,8 +67,12 @@ export default function DashboardCard({ dashboard, onDelete }: DashboardCardProp
                 )}
 
                 <div className="flex items-start justify-between mb-4">
-                    <div className="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center group-hover:bg-primary-500/20 transition-colors">
-                        <FileSpreadsheet className="w-6 h-6 text-primary-400" />
+                    <div className="w-12 h-12 rounded-xl bg-primary-400/10 flex items-center justify-center group-hover:bg-primary-400/20 transition-colors">
+                        {fileCount > 1 ? (
+                            <Files className="w-6 h-6 text-primary-400" />
+                        ) : (
+                            <FileSpreadsheet className="w-6 h-6 text-primary-400" />
+                        )}
                     </div>
 
                     {dashboard.last_sync_status && (
@@ -73,12 +86,12 @@ export default function DashboardCard({ dashboard, onDelete }: DashboardCardProp
                     )}
                 </div>
 
-                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-primary-300 transition-colors">
+                <h3 className="text-lg font-semibold text-white mb-1 group-hover:text-primary-400 transition-colors">
                     {dashboard.title || dashboard.file_name}
                 </h3>
 
                 <p className="text-sm text-dark-400 mb-4 truncate">
-                    {dashboard.file_name}
+                    {fileCount > 1 ? `${fileCount} files` : dashboard.file_name}
                 </p>
 
                 <div className="flex items-center justify-between text-xs text-dark-400">
