@@ -13,6 +13,7 @@ import google.generativeai as genai
 
 from app.agents.data_processor import DataProcessor, ProcessingResult
 from app.agents.schema_mapper import SchemaMapper, DriftReport
+from app.agents.tools import DataTools
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,8 @@ class AgentState(TypedDict, total=False):
     # Internal (for passing data between nodes)
     _data_summary: Dict[str, Any]
     _file_contexts: List[Dict[str, str]]  # [{file_name, file_context}]
+    _exploration_insights: Dict[str, Any]  # Tool-based exploration findings
+    _tools_called: List[str]  # Track which tools were called
 
 
 @dataclass  
@@ -105,19 +108,21 @@ class DataProcessingAgent:
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph workflow."""
+        """Build the LangGraph workflow with exploration step."""
         workflow = StateGraph(AgentState)
         
-        # Add nodes
+        # Add nodes - including new explore_data node for AI reasoning
         workflow.add_node("load_sheets", self._load_sheets)
+        workflow.add_node("explore_data", self._explore_data)  # NEW: AI exploration
         workflow.add_node("detect_schema_drift", self._detect_schema_drift)
         workflow.add_node("clean_data", self._clean_data)
         workflow.add_node("analyze_data", self._analyze_data)
         workflow.add_node("generate_charts", self._generate_charts)
         
-        # Add edges
+        # Add edges - exploration happens after loading, before drift detection
         workflow.set_entry_point("load_sheets")
-        workflow.add_edge("load_sheets", "detect_schema_drift")
+        workflow.add_edge("load_sheets", "explore_data")
+        workflow.add_edge("explore_data", "detect_schema_drift")
         workflow.add_edge("detect_schema_drift", "clean_data")
         workflow.add_edge("clean_data", "analyze_data")
         workflow.add_edge("analyze_data", "generate_charts")
@@ -143,6 +148,405 @@ class DataProcessingAgent:
             logger.error(f"Sheet loading failed: {e}")
         
         return state
+    
+    async def _explore_data(self, state: AgentState) -> AgentState:
+        """
+        AI Reasoning Loop: Explore data using tools before generating charts.
+        
+        This step uses DataTools to understand:
+        - Data structure and column types
+        - Data quality (nulls, outliers)
+        - Relationships between sheets (potential joins)
+        """
+        try:
+            if not state.get("sheets"):
+                return state
+            
+            # Convert sheets to DataFrames for tools
+            dataframes = {}
+            for name, records in state["sheets"].items():
+                if records:
+                    dataframes[name] = pd.DataFrame(records)
+            
+            if not dataframes:
+                return state
+            
+            # Initialize tools with the data
+            tools = DataTools(
+                dataframes=dataframes,
+                file_contexts=state.get("_file_contexts", []),
+                global_description=state.get("global_description")
+            )
+            
+            insights = {
+                "files_overview": [],
+                "column_types": {},
+                "null_metrics": {},
+                "join_suggestions": [],
+                "time_series_columns": [],
+                "data_quality_issues": []
+            }
+            tools_called = []
+            
+            # ===== ITERATION 0: Structural Exploration =====
+            logger.info("AI Exploration - Iteration 0: Structural analysis")
+            
+            # List all files/sheets
+            files_result = tools.list_dashboard_files()
+            if files_result.success:
+                insights["files_overview"] = files_result.data
+                tools_called.append("list_dashboard_files")
+            
+            # Get column types for each sheet
+            for sheet_name in dataframes.keys():
+                types_result = tools.get_column_types(sheet_name)
+                if types_result.success:
+                    insights["column_types"][sheet_name] = types_result.data
+                    tools_called.append(f"get_column_types({sheet_name})")
+            
+            # ===== ITERATION 1: Quality & Relationship Analysis =====
+            logger.info("AI Exploration - Iteration 1: Quality and relationships")
+            
+            # Calculate null metrics for each sheet
+            for sheet_name in dataframes.keys():
+                null_result = tools.calculate_null_metrics(sheet_name)
+                if null_result.success:
+                    # Only keep columns with significant nulls
+                    high_null_cols = {
+                        col: metrics for col, metrics in null_result.data.items()
+                        if metrics["null_pct"] > 5
+                    }
+                    if high_null_cols:
+                        insights["null_metrics"][sheet_name] = high_null_cols
+                        insights["data_quality_issues"].append(
+                            f"{sheet_name}: {len(high_null_cols)} columns have >5% nulls"
+                        )
+                    tools_called.append(f"calculate_null_metrics({sheet_name})")
+            
+            # Find time series columns
+            for sheet_name in dataframes.keys():
+                ts_result = tools.identify_time_series(sheet_name)
+                if ts_result.success and ts_result.data:
+                    insights["time_series_columns"].extend([
+                        {"sheet": sheet_name, **col} for col in ts_result.data
+                    ])
+                    tools_called.append(f"identify_time_series({sheet_name})")
+            
+            # If multiple sheets, find join possibilities
+            sheet_names = list(dataframes.keys())
+            if len(sheet_names) >= 2:
+                for i in range(len(sheet_names)):
+                    for j in range(i + 1, len(sheet_names)):
+                        sheet1, sheet2 = sheet_names[i], sheet_names[j]
+                        join_result = tools.suggest_join_keys(sheet1, sheet2)
+                        if join_result.success and join_result.data:
+                            # Test the best join suggestion
+                            best_join = join_result.data[0]
+                            if best_join["overlap_pct"] > 30:
+                                test_result = tools.test_join_quality(
+                                    sheet1, sheet2, 
+                                    best_join["col1"], best_join["col2"]
+                                )
+                                if test_result.success:
+                                    insights["join_suggestions"].append({
+                                        "sheet1": sheet1,
+                                        "sheet2": sheet2,
+                                        "column1": best_join["col1"],
+                                        "column2": best_join["col2"],
+                                        "overlap_pct": best_join["overlap_pct"],
+                                        "match_quality": test_result.data
+                                    })
+                                    tools_called.append(f"test_join_quality({sheet1}, {sheet2})")
+            
+            # ===== ITERATION 2: Profile key sheets =====
+            logger.info("AI Exploration - Iteration 2: Data profiling")
+            
+            # Profile the first sheet (primary data)
+            if sheet_names:
+                primary_sheet = sheet_names[0]
+                profile_result = tools.profile_full_dataset(primary_sheet)
+                if profile_result.success:
+                    insights["primary_sheet_profile"] = profile_result.data
+                    tools_called.append(f"profile_full_dataset({primary_sheet})")
+            
+            # Store exploration results
+            state["_exploration_insights"] = insights
+            state["_tools_called"] = tools_called
+            
+            # Log summary
+            logger.info(f"AI Exploration complete: {len(tools_called)} tool calls")
+            logger.info(f"  - Sheets analyzed: {len(sheet_names)}")
+            logger.info(f"  - Join suggestions: {len(insights['join_suggestions'])}")
+            logger.info(f"  - Time series columns: {len(insights['time_series_columns'])}")
+            logger.info(f"  - Quality issues: {len(insights['data_quality_issues'])}")
+            
+            state["messages"].append(
+                f"AI exploration complete: analyzed {len(sheet_names)} sheets with {len(tools_called)} tool calls"
+            )
+            
+        except Exception as e:
+            state["errors"].append(f"Exploration error: {str(e)}")
+            logger.error(f"Data exploration failed: {e}")
+            state["_exploration_insights"] = {}
+            state["_tools_called"] = []
+        
+        return state
+    
+    async def analyze_join_strategy_multiphase(
+        self,
+        sheets: Dict[str, pd.DataFrame],
+        file_contexts: List[Dict[str, str]],
+        global_description: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Multi-Phase Reasoning for intelligent join strategy.
+        
+        Phases:
+        1. Context Injection - Use file_context and global_description
+        2. Deep Inspection - Value distributions, ID column patterns
+        3. AI Proposal - AI suggests 2-3 potential join keys
+        4. Validation - Test each key and select best match
+        
+        Returns:
+            Join strategy with confidence_score and validation_results
+        """
+        import json
+        
+        if len(sheets) < 2 or not self.model:
+            return {"should_join": False, "reason": "Insufficient sheets or no AI model"}
+        
+        tools = DataTools(
+            dataframes=sheets,
+            file_contexts=file_contexts,
+            global_description=global_description
+        )
+        
+        sheet_names = list(sheets.keys())
+        
+        # ===== PHASE 1: Context Injection =====
+        logger.info("Join Analysis - Phase 1: Context injection")
+        
+        context_info = {}
+        for sheet_name in sheet_names:
+            # Find matching file context
+            sheet_context = None
+            for fc in file_contexts:
+                if fc.get("file_name") and (
+                    fc["file_name"] in sheet_name or 
+                    sheet_name in fc.get("file_name", "")
+                ):
+                    sheet_context = fc.get("file_context")
+                    break
+            
+            context_info[sheet_name] = {
+                "user_context": sheet_context,
+                "row_count": len(sheets[sheet_name]),
+                "columns": list(sheets[sheet_name].columns)
+            }
+        
+        # ===== PHASE 2: Deep Inspection =====
+        logger.info("Join Analysis - Phase 2: Deep inspection")
+        
+        deep_inspection = {}
+        for sheet_name in sheet_names:
+            df = sheets[sheet_name]
+            
+            # Get column types
+            types_result = tools.get_column_types(sheet_name)
+            column_types = types_result.data if types_result.success else {}
+            
+            # Identify potential ID/Key columns
+            potential_keys = []
+            for col in df.columns:
+                col_lower = str(col).lower()
+                # Check naming patterns
+                is_id_pattern = any(pattern in col_lower for pattern in [
+                    'id', 'key', 'code', 'ticker', 'symbol', 'sku', 'number', 'num', 'no'
+                ])
+                
+                # Check uniqueness ratio
+                unique_ratio = df[col].nunique() / len(df) if len(df) > 0 else 0
+                
+                if is_id_pattern or unique_ratio > 0.5:
+                    # Get sample values
+                    unique_result = tools.get_unique_values(sheet_name, col, limit=5)
+                    sample_values = unique_result.data.get("unique_values", []) if unique_result.success else []
+                    
+                    potential_keys.append({
+                        "column": col,
+                        "type": column_types.get(col, "unknown"),
+                        "unique_count": df[col].nunique(),
+                        "unique_ratio": round(unique_ratio, 2),
+                        "is_id_pattern": is_id_pattern,
+                        "sample_values": sample_values[:3]
+                    })
+            
+            deep_inspection[sheet_name] = {
+                "column_types": column_types,
+                "potential_keys": potential_keys[:5],  # Top 5 candidates
+                "sample_data": df.head(3).to_dict(orient='records')
+            }
+        
+        # ===== PHASE 3: AI Proposal =====
+        logger.info("Join Analysis - Phase 3: AI proposal")
+        
+        # Build comprehensive prompt with context
+        context_section = ""
+        if global_description:
+            context_section = f"DASHBOARD PURPOSE: {global_description}\n\n"
+        
+        sheets_description = ""
+        for sheet_name, info in context_info.items():
+            user_ctx = info.get("user_context") or "No context provided"
+            inspection = deep_inspection.get(sheet_name, {})
+            potential_keys = inspection.get("potential_keys", [])
+            
+            keys_str = "\n".join([
+                f"    - {k['column']} ({k['type']}, {k['unique_count']} unique, examples: {k['sample_values']})"
+                for k in potential_keys
+            ]) or "    - No obvious key columns"
+            
+            sheets_description += f"""
+SHEET: {sheet_name}
+  User Context: {user_ctx}
+  Rows: {info['row_count']}
+  Potential Key Columns:
+{keys_str}
+  Sample Data: {inspection.get('sample_data', [])}
+
+"""
+        
+        prompt = f"""{context_section}Analyze these sheets and propose 2-3 potential join key pairs:
+
+{sheets_description}
+
+Based on the user context and data patterns, identify the BEST columns to join these sheets.
+
+Consider:
+1. Column naming patterns (e.g., 'ticker' in one sheet might match 'symbol' in another)
+2. Data types should be compatible
+3. The user's context hints (e.g., "portfolio" and "transactions" likely share a stock identifier)
+
+Return a JSON object with your proposals - I will TEST each one to find the best match:
+{{
+    "proposals": [
+        {{
+            "sheet1": "sheet_name",
+            "sheet2": "sheet_name",
+            "column1": "column_name",
+            "column2": "column_name",
+            "reasoning": "Why these columns should match"
+        }}
+    ],
+    "primary_recommendation": 0, // index of best proposal
+    "overall_reasoning": "High-level explanation of join strategy"
+}}
+
+JSON response only:"""
+
+        ai_proposals = []
+        try:
+            response = await self.model.generate_content_async(prompt)
+            result_text = response.text.strip()
+            
+            # Extract JSON
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', result_text)
+            if json_match:
+                ai_response = json.loads(json_match.group())
+                ai_proposals = ai_response.get("proposals", [])
+                logger.info(f"AI proposed {len(ai_proposals)} join strategies")
+        except Exception as e:
+            logger.warning(f"AI proposal failed: {e}")
+        
+        # ===== PHASE 4: Validation Loop =====
+        logger.info("Join Analysis - Phase 4: Validation loop")
+        
+        validation_results = []
+        best_join = None
+        best_match_pct = 0
+        
+        for i, proposal in enumerate(ai_proposals):
+            sheet1 = proposal.get("sheet1")
+            sheet2 = proposal.get("sheet2")
+            col1 = proposal.get("column1")
+            col2 = proposal.get("column2")
+            
+            if not all([sheet1, sheet2, col1, col2]):
+                continue
+            
+            if sheet1 not in sheets or sheet2 not in sheets:
+                continue
+            
+            # Test join quality
+            quality = tools.test_join_quality(sheet1, sheet2, col1, col2)
+            
+            if quality.success:
+                match_pct = min(
+                    quality.data.get("match_pct_sheet1", 0),
+                    quality.data.get("match_pct_sheet2", 0)
+                )
+                
+                validation_results.append({
+                    "proposal_index": i,
+                    "columns": f"{sheet1}.{col1} = {sheet2}.{col2}",
+                    "match_pct": match_pct,
+                    "matched_count": quality.data.get("matched_count", 0),
+                    "recommendation": quality.data.get("recommendation", ""),
+                    "ai_reasoning": proposal.get("reasoning", "")
+                })
+                
+                logger.info(f"Tested {col1}={col2}: {match_pct}% match")
+                
+                if match_pct > best_match_pct:
+                    best_match_pct = match_pct
+                    best_join = {
+                        "left": sheet1,
+                        "right": sheet2,
+                        "left_col": col1,
+                        "right_col": col2,
+                        "match_pct": match_pct,
+                        "quality_data": quality.data
+                    }
+        
+        # Build final result
+        if best_join and best_match_pct >= 50:
+            confidence_score = min(100, best_match_pct + 10)  # Bonus for validation
+            
+            return {
+                "should_join": True,
+                "joins": [best_join],
+                "confidence_score": confidence_score,
+                "validation_results": validation_results,
+                "selected_join": {
+                    "columns": f"{best_join['left']}.{best_join['left_col']} = {best_join['right']}.{best_join['right_col']}",
+                    "match_pct": best_match_pct,
+                    "reason": f"Highest validated match ({best_match_pct}%) among {len(ai_proposals)} AI proposals"
+                },
+                "ai_proposals_count": len(ai_proposals),
+                "phases_completed": ["context_injection", "deep_inspection", "ai_proposal", "validation"]
+            }
+        elif best_join and best_match_pct >= 30:
+            # Low confidence warning
+            return {
+                "should_join": True,
+                "joins": [best_join],
+                "confidence_score": best_match_pct,
+                "validation_results": validation_results,
+                "warning": f"Low match quality ({best_match_pct}%). Consider keeping sheets separate.",
+                "selected_join": {
+                    "columns": f"{best_join['left']}.{best_join['left_col']} = {best_join['right']}.{best_join['right_col']}",
+                    "match_pct": best_match_pct
+                }
+            }
+        else:
+            return {
+                "should_join": False,
+                "confidence_score": 0,
+                "validation_results": validation_results,
+                "reason": "No join key achieved sufficient match quality (>30%)",
+                "ai_proposals_count": len(ai_proposals)
+            }
     
     async def _detect_schema_drift(self, state: AgentState) -> AgentState:
         """Detect schema changes from previous version."""
@@ -247,7 +651,7 @@ class DataProcessingAgent:
         return state
     
     async def _generate_charts(self, state: AgentState) -> AgentState:
-        """Generate chart configurations using AI."""
+        """Generate chart configurations using AI with exploration insights."""
         try:
             data = state.get("unified_data") or list(state["sheets"].values())[0] if state["sheets"] else []
             
@@ -260,6 +664,7 @@ class DataProcessingAgent:
             
             # Generate chart suggestions with AI
             summary = state.get("_data_summary", {})
+            exploration = state.get("_exploration_insights", {})
             
             # Build context section for the prompt
             context_section = ""
@@ -270,7 +675,32 @@ class DataProcessingAgent:
 
 """
             
-            prompt = f"""{context_section}Analyze this data and suggest 3-4 effective visualizations:
+            # Add exploration insights to prompt
+            exploration_section = ""
+            if exploration:
+                exploration_parts = []
+                
+                # Join suggestions
+                if exploration.get("join_suggestions"):
+                    joins = exploration["join_suggestions"]
+                    join_info = [f"  - {j['sheet1']} can join with {j['sheet2']} on {j['column1']}={j['column2']} ({j['overlap_pct']}% match)" for j in joins[:3]]
+                    exploration_parts.append("JOIN OPPORTUNITIES:\n" + "\n".join(join_info))
+                
+                # Time series columns
+                if exploration.get("time_series_columns"):
+                    ts_cols = exploration["time_series_columns"]
+                    ts_info = [f"  - {t['sheet']}.{t['column']} ({t.get('frequency', 'unknown')} frequency)" for t in ts_cols[:3]]
+                    exploration_parts.append("TIME SERIES COLUMNS (good for line charts):\n" + "\n".join(ts_info))
+                
+                # Data quality issues
+                if exploration.get("data_quality_issues"):
+                    quality_info = exploration["data_quality_issues"][:3]
+                    exploration_parts.append("DATA QUALITY NOTES:\n" + "\n".join([f"  - {q}" for q in quality_info]))
+                
+                if exploration_parts:
+                    exploration_section = "AI EXPLORATION FINDINGS:\n" + "\n\n".join(exploration_parts) + "\n\n"
+            
+            prompt = f"""{context_section}{exploration_section}Analyze this data and suggest 3-4 effective visualizations:
 
 Columns: {summary.get('columns', [])}
 Data Types: {summary.get('dtypes', {})}
@@ -279,6 +709,11 @@ Numeric columns: {summary.get('numeric_cols', [])}
 Categorical columns: {summary.get('categorical_cols', [])}
 Sample:
 {summary.get('sample', [])}
+
+IMPORTANT: Use the AI exploration findings above to make smarter chart choices:
+- If time series columns exist, prefer LINE charts for trends
+- If join opportunities exist, consider charts that combine data from multiple sources
+- Avoid columns with high null percentages for key metrics
 
 Return a JSON array of chart configurations. For each chart, explain WHY you chose it:
 [
@@ -548,9 +983,10 @@ Focus on meaningful business insights. Be specific in your reasoning. JSON respo
             "_file_contexts": file_contexts,
         }
         
-        # Skip load_sheets and clean_data, go directly to analysis
-        # Run analyze_data and generate_charts manually
-        state = await self._analyze_data(initial_state)
+        # Run exploration, analyze_data and generate_charts
+        # This enables the AI reasoning loop for multi-file dashboards
+        state = await self._explore_data(initial_state)  # NEW: Explore data first
+        state = await self._analyze_data(state)
         state = await self._generate_charts(state)
         
         return ProcessingOutput(
